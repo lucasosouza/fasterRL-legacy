@@ -10,6 +10,8 @@ from utils import *
 
 if __name__ == "__main__":
 
+    log_root = os.environ["LOG_DIR"]
+
     # load paramters
     parser = argparse.ArgumentParser()
     parser.add_argument("params") # mandatory
@@ -47,16 +49,18 @@ if __name__ == "__main__":
         # create an ID for the experiment
         now = datetime.strftime(datetime.now(), "%Y%m%d-%H%M%S")
         experiment_id = "-".join([params["METHOD"], params["DEFAULT_ENV_NAME"], now])
-        runs_dir = os.path.join("runs", experiment_id)
+        runs_dir = os.path.join(log_root, "runs", experiment_id)
 
         # dumps json with experiment hyperparameters
-        with open("logs/" + experiment_id + ".json", "w") as f:
+        with open(os.path.join(log_root, "logs", experiment_id + ".json"), "w") as f:
             json.dump(params, f)
+
+        RANDOM_SEED = 42
 
         # need to find a way to encapuslate method as well
         method = methods[params["METHOD"]]
-        local_log = method(params, runs_dir)
-        local_log_path = "results/" + experiment_id + '.json'
+        local_log = method(params, runs_dir, RANDOM_SEED)
+        local_log_path = os.path.join(log_root, "results", experiment_id + '.json')
 
         # output json
         with open( local_log_path , "w") as f:

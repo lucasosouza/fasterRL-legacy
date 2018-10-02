@@ -27,11 +27,16 @@ from functools import reduce
 from wrappers import make_env
 from buffers import Experience, ExperienceBuffer
 
+RANDOM_SEED = 42
+
 class DQN(nn.Module):
     
-    def __init__(self, input_shape, n_actions):
-        super(DQN, self).__init__()
+    def __init__(self, input_shape, n_actions, device):
 
+        # set random seed for pytorch
+        torch.manual_seed(RANDOM_SEED)
+
+        super(DQN, self).__init__()
 
         self.network = nn.Sequential(
             nn.Linear(input_shape, 16),
@@ -41,11 +46,17 @@ class DQN(nn.Module):
             nn.Linear(8, n_actions)
         )
         
+        self.device = device
     
     def forward(self, x):
         """ Main forward function """      
         
-        x = x.type(torch.FloatTensor)
+        # manually changed from torch.FloatTensor to torch.cuda.FloatTensor to run in GPU
+        # need to be dynamic or not do the conversion at all
+        if self.device == "cuda":
+            x = x.type(torch.cuda.FloatTensor)
+        elif self.device == "cpu":
+            x = x.type(torch.FloatTensor)
         return self.network(x)
 
         
@@ -53,6 +64,10 @@ class Agent:
     
     def __init__(self, alias, env, exp_buffer, net, tgt_net, gamma, epsilon, tau, trial, log_dir):
         
+
+        # set numpy random seed for action selection
+        np.random.seed(RANDOM_SEED)
+
         # agent's name
         self.alias = alias
         # creates an environment
@@ -132,7 +147,8 @@ class Agent:
             state_v = torch.tensor(state_a).to(device)
             # get q values with feed forward
             q_vals_v = self.net(state_v)
-            self.latest_qvals = q_vals_v.detach().numpy()[0] # store for bookkeeping
+            # manually adding .cpu() to run in GPU mode
+            # self.latest_qvals = q_vals_v.detach().cpu().numpy()[0] # store for bookkeeping
             # chooses greedy action and get its value
             _, act_v = torch.max(q_vals_v, dim=1)
             action = int(act_v.item())
@@ -176,9 +192,10 @@ class Agent:
         # track loss, if available
         if loss:
             self.writer.add_scalar("loss", loss, self.frame_idx)
-        if self.latest_qvals is not None:
-            self.writer.add_scalar("min_q_value", max(self.latest_qvals), self.frame_idx)
-            self.writer.add_scalar("max_q_value", min(self.latest_qvals), self.frame_idx)
+            
+        # if self.latest_qvals is not None:
+        #     self.writer.add_scalar("min_q_value", max(self.latest_qvals), self.frame_idx)
+        #     self.writer.add_scalar("max_q_value", min(self.latest_qvals), self.frame_idx)
 
         # track weights
         # if track_weights:
@@ -189,7 +206,7 @@ class Agent:
     def gen_params_debug(network):
         weights = []
         for tensor in network.parameters():
-            weights.extend(tensor.detach().numpy().ravel())
+            weights.extend(tensor.detach().cpu().numpy().ravel())
 
         return np.array(weights)
 
@@ -290,10 +307,13 @@ class Agent:
         return loss
 
 
-def DQN_experiment(params, log_dir):
+def DQN_experiment(params, log_dir, random_seed=None):
 
     # define device on which to run
     device = torch.device(params["DEVICE"])
+
+    # fix replay start sie to be equal to replay size
+    params["REPLAY_START_SIZE"] = params["REPLAY_SIZE"]
 
     ## initialize global variables
     # initialize local log trackers 
@@ -313,14 +333,16 @@ def DQN_experiment(params, log_dir):
 
         # need to be one env per agent
         env = make_env(params["DEFAULT_ENV_NAME"])
+        if random_seed:
+            env.seed(random_seed)
 
         # initialize agents
         for idx in range(params["NUM_AGENTS"]):
 
             # initialize agent
             buffer = ExperienceBuffer(params["REPLAY_SIZE"], env)
-            net = DQN(env.observation_space.shape[0], env.action_space.n).to(device)
-            tgt_net = DQN(env.observation_space.shape[0], env.action_space.n).to(device)
+            net = DQN(env.observation_space.shape[0], env.action_space.n, params["DEVICE"]).to(device)
+            tgt_net = DQN(env.observation_space.shape[0], env.action_space.n, params["DEVICE"]).to(device)
             epsilon = params["EPSILON_START"]
             gamma = params["GAMMA"]
             tau = params["SOFT_UPDATE_TAU"]
