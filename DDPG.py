@@ -26,9 +26,72 @@ from functools import reduce
 # modularization
 from wrappers import make_env
 from buffers import Experience, ExperienceBuffer
-import json
 
 RANDOM_SEED = 42
+
+class DDPGActor(nn.Module):
+
+    def __init__(self, input_shape, n_action, device):
+
+        # set random seed for pytorch
+        torch.manual_seed(RANDOM_SEED)
+
+        # init parent class
+        super(DDPGActor, self).__init__()
+
+        self.net = nn.Sequential(
+            nn.Linear(input_shape, 400), nn.ReLU(),
+            nn.Linear(400,300), nn.ReLU,
+            nn.Linear(300, n_action), nn.Tanh()
+        )
+
+    def forward(self, x):
+        """ Main forward function """      
+        
+        return self.net(x)
+
+class DDPGCritic(nn.Module):
+
+    def __init__(self, input_shape, n_action, device):
+
+        # set random seed for pytorch
+        torch.manual_seed(RANDOM_SEED)
+
+        # init parent class
+        super(DDPGCritic, self).__init__()
+
+        self.obs_net = nn.Sequential(
+            nn.Linear(obs_size, 400), nn.ReLU()
+        )
+
+        self.out_net = nn.Sequential(
+            nn.Linear(400+act_size, 300), nn.ReLU(),
+            nn.Linear(300,1)
+        )
+
+    def forward(self, x, a):
+        """ Main forward function """      
+
+        # get obseration
+        obs = self.obs_net(x)
+        
+        # concatenate observation and action and pass through out network
+        return self.out_net(torch.cat([obs, a], dim=1))
+
+
+
+    def forward(self, x):
+        """ Main forward function """      
+        
+        # manually changed from torch.FloatTensor to torch.cuda.FloatTensor to run in GPU
+        # need to be dynamic or not do the conversion at all
+        if self.device == "cuda":
+            x = x.type(torch.cuda.FloatTensor)
+        elif self.device == "cpu":
+            x = x.type(torch.FloatTensor)
+        return self.network(x)
+        
+
 
 class DQN(nn.Module):
     
@@ -61,10 +124,18 @@ class DQN(nn.Module):
         return self.network(x)
 
         
-class Agent:
+class AgentDDPG:
     
-    def __init__(self, alias, env, exp_buffer, net, tgt_net, gamma, epsilon, tau, trial, log_dir):
+    def __init__(self, alias, env, exp_buffer, net, tgt_net, gamma, epsilon, tau, trial, log_dir,
+        ou_enabled=True, ou_mu=0.0, ou_teta=0.15, ou_sigma=0.2, ou_epsilon=1.0):
         
+        # added values for OU
+        # default values for OU taken from Lillycrap paper 2015
+        self.ou_enabled = ou_enabled
+        self.ou_mu = ou_mu
+        self.ou_teta = ou_teta
+        self.ou_sigma = ou_sigma
+        self.ou_epsilon = ou_epsilon
 
         # set numpy random seed for action selection
         np.random.seed(RANDOM_SEED)
@@ -76,7 +147,6 @@ class Agent:
         # creates an experience buffer
         self.exp_buffer = exp_buffer
         # reset
-        self.episode = 0
         self.reset()
         # learning net
         self.net = net
@@ -124,7 +194,6 @@ class Agent:
         self.state = self.env.reset() # is it a bug I haven't seen yet
         self.steps = 0
         self.total_reward = 0.0
-        self.episode += 1
     
     def request_share(self, threshold):
         """ Returns a mask with all states that it wants experience from """
@@ -137,21 +206,39 @@ class Agent:
         done_reward = None
         self.steps += 1
 
-        ## action selection
+        # this seems to be the learning done with multiple samples, right?
+        # need to organize this code into a coherence piece of something
+        # else I won't get anywhere
+        # maybe it is better if I recover what I already did in tf
+
+        # moves state into an array with 1 sample to pass through neural net
+        state_a = np.array([self.state], copy=False)
+        # creates tensor
+        states_v = torch.tensor(state_a).to(device)
+        # get base value for actions
+        mu_v = self.net(state_v)
+        actions = mu_v.data.cpu().numpy()
+
+        # check if OU exploration is enabled (action is deterministic)
+        # what is agent states here?
+        if self.ou_enabled and self.ou_epsilon > 0:
+            new_a_states = []
+            for a_state, action in zip(agent_states, actions):
+                if a_state is None:
+                    a_state = np.zeros
+
+
+
         # play step with e-greedy exploration strategy
         # if not in test fase
         if np.random.random() < self.epsilon and not test:
             # takes a random action
             action = self.env.action_space.sample()
         else:
-            # moves state into an array with 1 sample to pass through neural net
-            state_a = np.array([self.state], copy=False)
-            # creates tensor
-            state_v = torch.tensor(state_a).to(device)
             # get q values with feed forward
             q_vals_v = self.net(state_v)
             # manually adding .cpu() to run in GPU mode
-            self.latest_qvals = q_vals_v.detach().cpu().numpy()[0] # store for bookkeeping
+            # self.latest_qvals = q_vals_v.detach().cpu().numpy()[0] # store for bookkeeping
             # chooses greedy action and get its value
             _, act_v = torch.max(q_vals_v, dim=1)
             action = int(act_v.item())
@@ -175,45 +262,35 @@ class Agent:
             # add totals
             self.total_rewards.append(done_reward)
             self.total_steps.append(self.steps)            
-            # track episode
-            self.record_episode()
             # reset environment
             self.reset()
-
+            
         return is_done, done_reward
 
-    def record_frame(self, loss=None):
+    def record(self, loss=None, track_weights=True):
 
+        self.writer.add_scalar("epsilon", self.epsilon, self.frame_idx)
+        # monitor training speed
+        self.writer.add_scalar("speed", self.speed, self.frame_idx)
+        # monitor average reward on last 100 episodes
+        self.writer.add_scalar("reward_100_avg", self.mean_reward, self.frame_idx)
+        self.writer.add_scalar("reward_100_std", self.std_reward, self.frame_idx)
+        # monitor reward
+        self.writer.add_scalar("reward", self.done_reward, self.frame_idx)
+        # monitor num_steps
+        self.writer.add_scalar("steps", self.steps, self.frame_idx)
+        # track loss, if available
         if loss:
             self.writer.add_scalar("loss", loss, self.frame_idx)
+            
+        # if self.latest_qvals is not None:
+        #     self.writer.add_scalar("min_q_value", max(self.latest_qvals), self.frame_idx)
+        #     self.writer.add_scalar("max_q_value", min(self.latest_qvals), self.frame_idx)
 
-        # monitor training speed - not that essential
-        # self.writer.add_scalar("speed", self.speed, self.frame_idx)
-
-        if self.latest_qvals is not None:
-            self.writer.add_scalar("q_value/min", max(self.latest_qvals), self.frame_idx)
-            self.writer.add_scalar("q_value/max", min(self.latest_qvals), self.frame_idx)
-
-
-    def record_episode(self, track_weights=True):
-
-        # episode wide is fine as well
-        self.writer.add_scalar("epsilon", self.epsilon, self.episode)
-        # monitor average reward on last 100 episodes
-        self.writer.add_scalar("reward_100/avg", self.mean_reward, self.episode)
-        self.writer.add_scalar("reward_100/std", self.std_reward, self.episode)
-        # monitor reward
-        self.writer.add_scalar("reward", self.done_reward, self.episode)
-        # monitor num_steps
-        self.writer.add_scalar("steps", self.steps, self.episode)
-
-        # too much overhead, remove it for now
         # track weights
         # if track_weights:
         #     self.writer.add_histogram("net_weights", self.gen_params_debug(self.net))
         #     self.writer.add_histogram("tgt_net_weights", self.gen_params_debug(self.tgt_net))
-
-
 
     @staticmethod
     def gen_params_debug(network):
@@ -320,7 +397,7 @@ class Agent:
         return loss
 
 
-def DQN_experiment(params, log_dir, local_log_path, random_seed=None):
+def DQN_experiment(params, log_dir, random_seed=None):
 
     # define device on which to run
     device = torch.device(params["DEVICE"])
@@ -386,7 +463,7 @@ def DQN_experiment(params, log_dir, local_log_path, random_seed=None):
 
                 # play step
                 episode_over, done_reward = agent.play_step(device=device)
-                if params["DEBUG"]: agent.record_frame()
+                if params["DEBUG"]: agent.record()
 
                 # check if minimum buffer size has been achieved. if not, move on, do not do learning
                 if len(agent.exp_buffer) >= params["REPLAY_START_SIZE"]:
@@ -552,7 +629,7 @@ def DQN_experiment(params, log_dir, local_log_path, random_seed=None):
 
                         # track agent parameters, including loss function
                         # detach loss before extracting value - not sure if needed, but better safe than sorry
-                        if params["DEBUG"]: agent.record_frame(loss_t.detach().item())
+                        if params["DEBUG"]: agent.record(loss_t.detach().item())
 
 
     for agent in agents:
@@ -566,11 +643,7 @@ def DQN_experiment(params, log_dir, local_log_path, random_seed=None):
         "ma_rewards": log_ma_rewards,
         "md_rewards": log_md_rewards
     }
-
-    # output json
-    with open( local_log_path , "w") as f:
-        json.dump(local_log, f)
-    print("Experiment complet. Results found at: " + local_log_path)
+    return local_log
 
 
 

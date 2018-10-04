@@ -9,9 +9,14 @@ import numpy as np
 from utils import *
 from pprint import pprint
 
+from multiprocessing import Process
+
 if __name__ == "__main__":
 
-    log_root = os.environ["LOG_DIR"]
+    if "LOG_DIR" in os.environ:
+        log_root = os.environ["LOG_DIR"]
+    else:
+        log_root = "./"
 
     # load paramters
     parser = argparse.ArgumentParser()
@@ -48,8 +53,9 @@ if __name__ == "__main__":
     for params in experiments:
 
         # create an ID for the experiment
-        now = datetime.strftime(datetime.now(), "%Y%m%d-%H%M%S")
+        now = datetime.strftime(datetime.now(), "%Y%m%d-%H%M%S-%f")[:-3]
         experiment_id = "-".join([params["METHOD"], params["DEFAULT_ENV_NAME"], now])
+        print("running: ", experiment_id)
         runs_dir = os.path.join(log_root, "runs", experiment_id)
 
         # dumps json with experiment hyperparameters
@@ -58,17 +64,15 @@ if __name__ == "__main__":
 
         RANDOM_SEED = 42
 
-        # need to find a way to encapuslate method as well
-        pprint(params)
+        # need to find a way to encapsulate method as well
+        # pprint(params)
         method = methods[params["METHOD"]]
-        local_log = method(params, runs_dir, RANDOM_SEED)
         local_log_path = os.path.join(log_root, "results", experiment_id + '.json')
 
-        # output json
-        with open( local_log_path , "w") as f:
-            json.dump(local_log, f)
+        # run methods in parallel
+        p = Process(target=method, args=(params, runs_dir, local_log_path, RANDOM_SEED))
+        p.start()
 
-        print("Experiment complet. Results found at: " + local_log_path)
 
 
 
