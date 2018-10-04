@@ -8,8 +8,9 @@ from datetime import datetime
 import numpy as np
 from utils import *
 from pprint import pprint
+from time import sleep
 
-from multiprocessing import Process
+from multiprocessing import Pool, cpu_count
 
 if __name__ == "__main__":
 
@@ -50,10 +51,14 @@ if __name__ == "__main__":
     for c in combinations:
         experiments.append(dict(c)) 
 
+    NUM_PROCESSES = cpu_count()
+    pool = Pool(processes=NUM_PROCESSES)
+    processes = []
     for params in experiments:
 
         # create an ID for the experiment
-        now = datetime.strftime(datetime.now(), "%Y%m%d-%H%M%S-%f")[:-3]
+        now = datetime.strftime(datetime.now(), "%Y%m%d-%H%M%S-%f")[:-4]
+        sleep(0.01)
         experiment_id = "-".join([params["METHOD"], params["DEFAULT_ENV_NAME"], now])
         print("running: ", experiment_id)
         runs_dir = os.path.join(log_root, "runs", experiment_id)
@@ -64,15 +69,17 @@ if __name__ == "__main__":
 
         RANDOM_SEED = 42
 
-        # need to find a way to encapsulate method as well
+       # need to find a way to encapsulate method as well
         # pprint(params)
         method = methods[params["METHOD"]]
         local_log_path = os.path.join(log_root, "results", experiment_id + '.json')
 
         # run methods in parallel
-        p = Process(target=method, args=(params, runs_dir, local_log_path, RANDOM_SEED))
-        p.start()
+        p = pool.apply_async(method, (params, runs_dir, local_log_path, RANDOM_SEED))
+        processes.append(p)
 
+    for p in processes:
+        p.get()
 
 
 
