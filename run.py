@@ -7,6 +7,7 @@ from itertools import product
 from datetime import datetime
 import numpy as np
 from utils import *
+from pprint import pprint
 
 if __name__ == "__main__":
 
@@ -58,6 +59,7 @@ if __name__ == "__main__":
         RANDOM_SEED = 42
 
         # need to find a way to encapuslate method as well
+        pprint(params)
         method = methods[params["METHOD"]]
         local_log = method(params, runs_dir, RANDOM_SEED)
         local_log_path = os.path.join(log_root, "results", experiment_id + '.json')

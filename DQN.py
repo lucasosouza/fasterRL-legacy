@@ -75,6 +75,7 @@ class Agent:
         # creates an experience buffer
         self.exp_buffer = exp_buffer
         # reset
+        self.episode = 0
         self.reset()
         # learning net
         self.net = net
@@ -122,6 +123,7 @@ class Agent:
         self.state = self.env.reset() # is it a bug I haven't seen yet
         self.steps = 0
         self.total_reward = 0.0
+        self.episode += 1
     
     def request_share(self, threshold):
         """ Returns a mask with all states that it wants experience from """
@@ -148,7 +150,7 @@ class Agent:
             # get q values with feed forward
             q_vals_v = self.net(state_v)
             # manually adding .cpu() to run in GPU mode
-            # self.latest_qvals = q_vals_v.detach().cpu().numpy()[0] # store for bookkeeping
+            self.latest_qvals = q_vals_v.detach().cpu().numpy()[0] # store for bookkeeping
             # chooses greedy action and get its value
             _, act_v = torch.max(q_vals_v, dim=1)
             action = int(act_v.item())
@@ -172,35 +174,45 @@ class Agent:
             # add totals
             self.total_rewards.append(done_reward)
             self.total_steps.append(self.steps)            
+            # track episode
+            self.record_episode()
             # reset environment
             self.reset()
-            
+
         return is_done, done_reward
 
-    def record(self, loss=None, track_weights=True):
+    def record_frame(self, loss=None):
 
-        self.writer.add_scalar("epsilon", self.epsilon, self.frame_idx)
-        # monitor training speed
-        self.writer.add_scalar("speed", self.speed, self.frame_idx)
-        # monitor average reward on last 100 episodes
-        self.writer.add_scalar("reward_100_avg", self.mean_reward, self.frame_idx)
-        self.writer.add_scalar("reward_100_std", self.std_reward, self.frame_idx)
-        # monitor reward
-        self.writer.add_scalar("reward", self.done_reward, self.frame_idx)
-        # monitor num_steps
-        self.writer.add_scalar("steps", self.steps, self.frame_idx)
-        # track loss, if available
         if loss:
             self.writer.add_scalar("loss", loss, self.frame_idx)
-            
-        # if self.latest_qvals is not None:
-        #     self.writer.add_scalar("min_q_value", max(self.latest_qvals), self.frame_idx)
-        #     self.writer.add_scalar("max_q_value", min(self.latest_qvals), self.frame_idx)
 
+        # monitor training speed - not that essential
+        # self.writer.add_scalar("speed", self.speed, self.frame_idx)
+
+        if self.latest_qvals is not None:
+            self.writer.add_scalar("q_value/min", max(self.latest_qvals), self.frame_idx)
+            self.writer.add_scalar("q_value/max", min(self.latest_qvals), self.frame_idx)
+
+
+    def record_episode(self, track_weights=True):
+
+        # episode wide is fine as well
+        self.writer.add_scalar("epsilon", self.epsilon, self.episode)
+        # monitor average reward on last 100 episodes
+        self.writer.add_scalar("reward_100/avg", self.mean_reward, self.episode)
+        self.writer.add_scalar("reward_100/std", self.std_reward, self.episode)
+        # monitor reward
+        self.writer.add_scalar("reward", self.done_reward, self.episode)
+        # monitor num_steps
+        self.writer.add_scalar("steps", self.steps, self.episode)
+
+        # too much overhead, remove it for now
         # track weights
         # if track_weights:
         #     self.writer.add_histogram("net_weights", self.gen_params_debug(self.net))
         #     self.writer.add_histogram("tgt_net_weights", self.gen_params_debug(self.tgt_net))
+
+
 
     @staticmethod
     def gen_params_debug(network):
@@ -373,7 +385,7 @@ def DQN_experiment(params, log_dir, random_seed=None):
 
                 # play step
                 episode_over, done_reward = agent.play_step(device=device)
-                if params["DEBUG"]: agent.record()
+                if params["DEBUG"]: agent.record_frame()
 
                 # check if minimum buffer size has been achieved. if not, move on, do not do learning
                 if len(agent.exp_buffer) >= params["REPLAY_START_SIZE"]:
@@ -539,7 +551,7 @@ def DQN_experiment(params, log_dir, random_seed=None):
 
                         # track agent parameters, including loss function
                         # detach loss before extracting value - not sure if needed, but better safe than sorry
-                        if params["DEBUG"]: agent.record(loss_t.detach().item())
+                        if params["DEBUG"]: agent.record_frame(loss_t.detach().item())
 
 
     for agent in agents:
