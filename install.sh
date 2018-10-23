@@ -4,7 +4,7 @@ echo '\nexport LOG_DIR=/mnt/storage/log-experiments' >> ~/.bashrc
 source ~/.bashrc
 
 # create directories
-mkdir ${LOG_DIR}/experiments
+mkdir experiments
 mkdir ${LOG_DIR}/logs
 mkdir ${LOG_DIR}/results
 mkdir ${LOG_DIR}/runs

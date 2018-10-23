@@ -51,7 +51,12 @@ if __name__ == "__main__":
     for c in combinations:
         experiments.append(dict(c)) 
 
-    NUM_PROCESSES = cpu_count()
+    NUM_PROCESSES = 6
+    # NUM_PROCESSES = cpu_count()
+    # using 8 parallel in Acrobot, run into RAM limitation, expires the 16b available
+    # seems each process consumes about 2gb RAM
+    # that looks equivalent to Minecraft
+    # CPU is at full power after 4 concurrent processes
     pool = Pool(processes=NUM_PROCESSES)
     processes = []
     for params in experiments:
